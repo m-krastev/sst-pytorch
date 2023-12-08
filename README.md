@@ -1,4 +1,5 @@
 # Practical 2 - Sentiment Analysis
+
 The goal of this practical is to implement a sentiment analysis model using PyTorch. The model will be trained on the Stanford Sentiment Treebank (SST) dataset.
 
 ## Code Structure
@@ -7,7 +8,6 @@ The goal of this practical is to implement a sentiment analysis model using PyTo
 - `utils.py` : Contains utility functions for loading the data, plotting, etc. Contains the code for the `TreeDataset` class which is used to load the data.
 - `trainingutils.py` : Contains utility functions for training and evaluation, deprecated.
 - `run_tree.job`: Slurm job file to run the model on the cluster (with 3 different seeds for reproducibility).
-
 
 ## Command Line Arguments
 
