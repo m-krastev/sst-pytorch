@@ -283,6 +283,7 @@ def main():
         num_workers=args.num_workers,
         lower=args.lower,
         data_dir=args.data_dir,
+        subtrees=args.subtrees,
     )
     loader.prepare_data()
 
@@ -303,19 +304,24 @@ def main():
         )
 
     # Prepare a callback to save the best model
+    model_name = lightning_model.model.__class__.__name__
     os.makedirs(args.model_dir, exist_ok=True)
     bestmodel_callback = ModelCheckpoint(
         monitor="val_acc",
         save_top_k=1,
-        filename="TreeLSTM-{epoch}-{val_loss:.2f}-{val_acc:.2f}",
+        mode="max",
+        filename=f"{model_name}-{{epoch}}-{{val_loss:.2f}}-{{val_acc:.2f}}",
         dirpath=os.path.join(args.model_dir, "checkpoints"),
     )
-
+    
+    logger = pl.loggers.TensorBoardLogger(
+        save_dir=args.model_dir, name=model_name
+    )
     trainer = pl.Trainer(
         accelerator=args.device,
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
-        enable_progress_bar=args.debug,
+        logger=logger,
     )
 
     if args.evaluate:

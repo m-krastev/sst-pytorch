@@ -39,7 +39,6 @@ class BOWLightning(pl.LightningModule):
 
         self.model = BOW(vocab_size, embedding_dim, vocab)
         self.loss = nn.CrossEntropyLoss()
-        self.losses = []
 
     def training_step(self, batch):
         x, targets = batch
@@ -101,17 +100,25 @@ def main():
     else:
         lightning_model = BOWLightning(len(loader.vocab.w2i), len(i2t), loader.vocab, args.lr)
 
+
+    model_name = lightning_model.model.__class__.__name__
     os.makedirs(args.model_dir, exist_ok=True)
     bestmodel_callback = ModelCheckpoint(
         monitor="val_acc",
         save_top_k=1,
-        filename="BOW-{epoch}-{val_loss:.2f}-{val_acc:.2f}",
+        mode="max",
+        filename=f"{model_name}-{{epoch}}-{{val_loss:.2f}}-{{val_acc:.2f}}",
         dirpath=os.path.join(args.model_dir, "checkpoints"),
+    )
+    
+    logger = pl.loggers.TensorBoardLogger(
+        save_dir=args.model_dir, name=model_name
     )
     trainer = pl.Trainer(
         accelerator=args.device,
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
+        logger=logger,
     )
     if args.evaluate:
         trainer.test(lightning_model, loader.test_dataloader())

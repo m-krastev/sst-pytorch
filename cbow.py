@@ -3,13 +3,11 @@ import os
 from torch import nn
 from torch import optim
 
-from utils import (
-    TreeDatasetPL,
-    parser
-)
+from utils import TreeDatasetPL, parser
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
+
 
 class CBOW(nn.Module):
     """Continuous bag-of-words model"""
@@ -95,7 +93,9 @@ def main():
     t2i = {p: i for i, p in enumerate(i2t)}  # noqa: F841
 
     # Load the dataset
-    loader = TreeDatasetPL(batch_size=args.batch_size, num_workers=args.num_workers, lower=args.lower)
+    loader = TreeDatasetPL(
+        batch_size=args.batch_size, num_workers=args.num_workers, lower=args.lower
+    )
     loader.prepare_data()
 
     # Load the model
@@ -104,20 +104,28 @@ def main():
             args.checkpoint, vocab=loader.vocab
         )
     else:
-        lightning_model = CBOWLightning(args.embedding_dim, loader.vocab, len(i2t), args.lr)
+        lightning_model = CBOWLightning(
+            args.embedding_dim, loader.vocab, len(i2t), args.lr
+        )
 
+    model_name = lightning_model.model.__class__.__name__
     os.makedirs(args.model_dir, exist_ok=True)
     bestmodel_callback = ModelCheckpoint(
         monitor="val_acc",
         save_top_k=1,
-        filename="CBOW-{epoch}-{val_loss:.2f}-{val_acc:.2f}",
+        mode="max",
+        filename=f"{model_name}-{{epoch}}-{{val_loss:.2f}}-{{val_acc:.2f}}",
         dirpath=os.path.join(args.model_dir, "checkpoints"),
     )
+
+    logger = pl.loggers.TensorBoardLogger(save_dir=args.model_dir, name=model_name)
+
     trainer = pl.Trainer(
         accelerator=args.device,
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
-        enable_progress_bar=args.debug
+        enable_progress_bar=args.debug,
+        logger=logger,
     )
 
     if args.evaluate:

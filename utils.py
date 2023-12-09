@@ -335,7 +335,7 @@ class TreeDatasetTree(Dataset):
         # NOTE: reversed sequence!
         x = torch.tensor(
             [
-                pad([self.vocab.w2i.get(t, 0) for t in ex.tokens], maxlen)[::-1]
+                pad([self.vocab.w2i.get(t, self.vocab.w2i["<unk>"]) for t in ex.tokens], maxlen)[::-1]
                 for ex in mb
             ],
             dtype=torch.int64,
@@ -358,6 +358,7 @@ class TreeDatasetTreePL(pl.LightningDataModule):
         num_workers: int = 4,
         data_dir: str = "data/",
         lower: bool = False,
+        subtrees: bool = False,
     ):
         super().__init__()
 
@@ -366,6 +367,7 @@ class TreeDatasetTreePL(pl.LightningDataModule):
         self.num_workers = num_workers
         self.lower = lower
         self.data_dir = data_dir
+        self.subtrees = subtrees
 
     def prepare_data(self):
         datasets = load_dataset(self.data_dir)
@@ -377,15 +379,66 @@ class TreeDatasetTreePL(pl.LightningDataModule):
                     self.vocab.count_token(token)
             self.vocab.build()
 
-        self.train_data = TreeDatasetTree(
-            list(examplereader(datasets["train"], lower=self.lower)), self.vocab
-        )
-        self.val_data = TreeDatasetTree(
-            list(examplereader(datasets["dev"], lower=self.lower)), self.vocab
-        )
-        self.test_data = TreeDatasetTree(
-            list(examplereader(datasets["test"], lower=self.lower)), self.vocab
-        )
+        if self.subtrees:
+            # create subtrees
+            train_data = list(examplereader(datasets["train"], lower=self.lower))
+            subtrees = []
+            for ex in train_data:
+                for subtree in ex.tree.subtrees():
+                        print(subtree.__str__())
+                        subtrees.append(
+                            Example(
+                                tokens=subtree.leaves(),
+                                tree=subtree,
+                                label=subtree.label(),
+                                transitions=transitions_from_treestring(
+                                    subtree.__str__()
+                                ),
+                            )
+                        )
+            self.train_data = TreeDatasetTree(subtrees, self.vocab)
+            
+            val_data = list(examplereader(datasets["dev"], lower=self.lower))
+            subtrees = []
+            for ex in val_data:
+                for subtree in ex.tree.subtrees():
+                    subtrees.append(
+                        Example(
+                            tokens=subtree.leaves(),
+                            tree=subtree,
+                            label=subtree.label(),
+                            transitions=transitions_from_treestring(
+                                subtree.__str__()
+                            ),
+                        )
+                    )
+            self.val_data = TreeDatasetTree(subtrees, self.vocab)
+            
+            test_data = list(examplereader(datasets["test"], lower=self.lower))
+            subtrees = []
+            for ex in test_data:
+                for subtree in ex.tree.subtrees():
+                    subtrees.append(
+                        Example(
+                            tokens=subtree.leaves(),
+                            tree=subtree,
+                            label=subtree.label(),
+                            transitions=transitions_from_treestring(
+                                subtree.__str__()
+                            ),
+                        )
+                    )
+            self.test_data = TreeDatasetTree(subtrees, self.vocab)
+        else:
+            self.train_data = TreeDatasetTree(
+                list(examplereader(datasets["train"], lower=self.lower)), self.vocab
+            )
+            self.val_data = TreeDatasetTree(
+                list(examplereader(datasets["dev"], lower=self.lower)), self.vocab
+            )
+            self.test_data = TreeDatasetTree(
+                list(examplereader(datasets["test"], lower=self.lower)), self.vocab
+            )
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(
@@ -478,9 +531,9 @@ def parser():
     parser.add_argument(
         "--embeddings_type",
         type=str,
-        default="word2vec",
+        default=None,
         choices=["word2vec", "glove"],
-        help="embeddings type",
+        help="use pretrained embeddings",
     )
     parser.add_argument(
         "--num_iterations", type=int, default=10000, help="number of iterations"
@@ -510,6 +563,12 @@ def parser():
         type=str,
         default=None,
         help="name of the model checkpoint file",
+    )
+
+    parser.add_argument(
+        "--subtrees",
+        action="store_true",
+        help="whether to use subtrees",
     )
 
     return parser.parse_args()

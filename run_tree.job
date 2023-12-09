@@ -45,7 +45,6 @@ do
         --data_dir $root \
         --lr 0.003 \
         --epochs 30 \
-        --embeddings_type glove
         # --debug
 done
 
@@ -58,11 +57,24 @@ do
         --data_dir $root \
         --lr 0.003 \
         --epochs 30 \
-        --embeddings_type glove
         # --debug
 done
 
 # Run with own embeddings (deep)
+echo "Running deep CBOW without pretrained embeddings"
+for seed in "${seeds[@]}"
+do
+    python $code_dir/deepcbow.py \
+        --epochs 30 \
+        --seed $seed \
+        --data_dir $root \
+        --lr 0.003 \
+        --epochs 30 \
+        # --debug
+done
+
+# Run with deep CBOW with pretrained embeddings
+echo "Running deep CBOW with pretrained embeddings"
 for seed in "${seeds[@]}"
 do
     python $code_dir/deepcbow.py \
@@ -75,19 +87,8 @@ do
         # --debug
 done
 
-# Run with deep CBOW with pretrained embeddings
-for seed in "${seeds[@]}"
-do
-    python $code_dir/deepcbow_pt.py \
-        --epochs 30 \
-        --seed $seed \
-        --data_dir $root \
-        --lr 0.003 \
-        --epochs 30 \
-        --embeddings_type glove
-        # --debug
-done
-
+# Run with LSTM
+echo "Running LSTM with pretrained embeddings"
 for seed in "${seeds[@]}"
 do
     python $code_dir/lstm.py \
@@ -101,6 +102,7 @@ do
 done
 
 # Run with fine-tunable embeddings
+echo "Running LSTM with fine-tunable embeddings"
 for seed in "${seeds[@]}"
 do
     python $code_dir/lstm.py \
@@ -114,7 +116,8 @@ do
         # --debug
 done
 
-
+# Run with TreeLSTM
+echo "Running TreeLSTM with pretrained embeddings"
 for seed in "${seeds[@]}"
 do
     python $code_dir/treelstm.py \
