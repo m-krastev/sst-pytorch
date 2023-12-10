@@ -35,7 +35,7 @@ class DeepCBOW(nn.Module):
         # this is a trainable look-up table with word embeddings
         if vectors is not None:
             self.embed = nn.Embedding.from_pretrained(
-                vectors, freeze=train_embeddings, padding_idx=self.vocab.w2i["<pad>"]
+                vectors, freeze=not train_embeddings, padding_idx=self.vocab.w2i["<pad>"]
             )
         else:
             self.embed = nn.Embedding(

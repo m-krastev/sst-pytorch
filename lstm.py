@@ -93,7 +93,7 @@ class LSTMClassifier(nn.Module):
         
         if vectors is not None:
             self.embed = nn.Embedding.from_pretrained(
-                vectors, freeze=train_embeddings, padding_idx=vocab.w2i["<pad>"]
+                vectors, freeze=not train_embeddings, padding_idx=vocab.w2i["<pad>"]
             )
         else:
             self.embed = nn.Embedding(

@@ -179,7 +179,7 @@ class TreeLSTMClassifier(nn.Module):
 
         if vectors is not None:
             self.embed = nn.Embedding.from_pretrained(
-                vectors, freeze=train_embeddings, padding_idx=vocab.w2i["<pad>"]
+                vectors, freeze=not train_embeddings, padding_idx=vocab.w2i["<pad>"]
             )
         else:
             self.embed = nn.Embedding(
@@ -294,13 +294,13 @@ def main():
         )
     else:
         lightning_model = TreeLSTMLightning(
-            args.embedding_dim,
-            vocab,
-            vectors,
-            len(i2t),
-            args.lr,
-            args.hidden_dim,
-            args.train_embeddings,
+            embedding_dim=args.embedding_dim,
+            vocab=vocab,
+            vectors=vectors,
+            output_dim=len(i2t),
+            lr=args.lr,
+            hidden_dim=args.hidden_dim,
+            train_embeddings=args.train_embeddings,
         )
 
     # Prepare a callback to save the best model
@@ -322,6 +322,7 @@ def main():
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
         logger=logger,
+        detect_anomaly=True
     )
 
     if args.evaluate:
