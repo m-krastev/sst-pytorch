@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch import optim
 
-from utils import TreeDatasetPL, parser
+from utils import SST_PL, parser, print_parameters
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -40,6 +40,8 @@ class BOWLightning(pl.LightningModule):
         self.model = BOW(vocab_size, embedding_dim, vocab)
         self.loss = nn.CrossEntropyLoss()
 
+        print_parameters(self.model)
+
     def training_step(self, batch):
         x, targets = batch
         logits = self.model(x)
@@ -52,8 +54,8 @@ class BOWLightning(pl.LightningModule):
         logits = self.model(x)
         loss = self.loss(logits, targets)
         acc = (logits.argmax(dim=-1) == targets).sum().float() / targets.size(0)
-        self.log("val_acc", acc, on_epoch=True)
-        self.log("val_loss", loss, prog_bar=True, on_epoch=True)
+        self.log("val_acc", acc, on_epoch=True, prog_bar=True)
+        self.log("val_loss", loss, on_epoch=True)
         return {"loss": loss, "val_acc": acc}
 
     def test_step(self, batch):
@@ -77,8 +79,7 @@ class BOWLightning(pl.LightningModule):
 def main():
     args = parser()
 
-    if args.debug:
-        print(args)
+    print(args)
 
     # Set the random seed manually for reproducibility.
     pl.seed_everything(args.seed)
@@ -87,7 +88,7 @@ def main():
     t2i = {p: i for i, p in enumerate(i2t)}  # noqa: F841
 
     # Load the dataset
-    loader = TreeDatasetPL(
+    loader = SST_PL(
         batch_size=args.batch_size, num_workers=args.num_workers, lower=args.lower
     )
     loader.prepare_data()
@@ -98,8 +99,9 @@ def main():
             args.checkpoint, vocab=loader.vocab
         )
     else:
-        lightning_model = BOWLightning(len(loader.vocab.w2i), len(i2t), loader.vocab, args.lr)
-
+        lightning_model = BOWLightning(
+            len(loader.vocab.w2i), len(i2t), loader.vocab, args.lr
+        )
 
     model_name = lightning_model.model.__class__.__name__
     os.makedirs(args.model_dir, exist_ok=True)
@@ -110,27 +112,27 @@ def main():
         filename=f"{model_name}-{{epoch}}-{{val_loss:.2f}}-{{val_acc:.2f}}",
         dirpath=os.path.join(args.model_dir, "checkpoints"),
     )
-    
-    logger = pl.loggers.TensorBoardLogger(
-        save_dir=args.model_dir, name=model_name
-    )
+
+    logger = pl.loggers.TensorBoardLogger(save_dir=args.model_dir, name=model_name)
     trainer = pl.Trainer(
         accelerator=args.device,
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
         logger=logger,
+        enable_progress_bar=args.debug,
     )
     if args.evaluate:
         trainer.test(lightning_model, loader.test_dataloader())
     else:
         # Training code + testing
-        trainer.fit(lightning_model, loader.train_dataloader(), loader.val_dataloader())
-
-        lightning_model = BOWLightning.load_from_checkpoint(
-            bestmodel_callback.best_model_path, vocab=loader.vocab
+        trainer.fit(
+            lightning_model,
+            loader.train_dataloader(),
+            loader.val_dataloader(),
+            ckpt_path=args.checkpoint,
         )
 
-        trainer.test(lightning_model, loader.test_dataloader())
+        trainer.test(lightning_model, loader.test_dataloader(), ckpt_path="best")
 
 
 if __name__ == "__main__":

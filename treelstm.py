@@ -9,7 +9,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 from utils import (
-    TreeDatasetTreePL,
+    SST_TreePL,
     load_embeddings,
     initialize_vocabulary,
     parser,
@@ -25,15 +25,16 @@ REDUCE = 1
 class TreeLSTMCell(nn.Module):
     """A Binary Tree LSTM cell"""
 
-    def __init__(self, input_size, hidden_size, bias=True):
+    def __init__(self, input_size, hidden_size, bias=True, childsum=False):
         """Creates the weights for this LSTM"""
         super(TreeLSTMCell, self).__init__()
 
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.bias = bias
+        self.childsum = childsum
 
-        self.reduce_layer = nn.Linear(2 * hidden_size, 5 * hidden_size)
+        self.reduce_layer = nn.Linear(hidden_size if childsum else 2 * hidden_size, 5 * hidden_size)
         self.dropout_layer = nn.Dropout(p=0.25)
 
         self.reset_parameters()
@@ -54,9 +55,12 @@ class TreeLSTMCell(nn.Module):
 
         # B = prev_h_l.size(0)
 
-        # we concatenate the left and right children
-        # you can also project from them separately and then sum
-        children = torch.cat([prev_h_l, prev_h_r], dim=1)
+        # project from them separately and then sum
+        if self.childsum:
+            children = prev_h_l + prev_h_r
+        else:
+            # concatenate the left and right children
+            children = torch.cat([prev_h_l, prev_h_r], dim=1)
 
         # project the combined children into a 5D tensor for i,fl,fr,g,o
         # this is done for speed, and you could also do it separately
@@ -65,7 +69,12 @@ class TreeLSTMCell(nn.Module):
         # each shape: B x D
         i, fl, fr, g, o = torch.chunk(proj, 5, dim=-1)
 
-        # that was literally in the provided code...
+        i = torch.sigmoid(i)
+        fl = torch.sigmoid(fl)
+        fr = torch.sigmoid(fr)
+        g = torch.tanh(g)
+        o = torch.sigmoid(o)
+
         c = fl * prev_c_l + fr * prev_c_r + i * g
         h = o * torch.tanh(c)
         return h, c
@@ -79,14 +88,14 @@ class TreeLSTMCell(nn.Module):
 class TreeLSTM(nn.Module):
     """Encodes a sentence using a TreeLSTMCell"""
 
-    def __init__(self, input_size, hidden_size, bias=True):
+    def __init__(self, input_size, hidden_size, bias=True, childsum=False):
         """Creates the weights for this LSTM"""
         super(TreeLSTM, self).__init__()
 
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.bias = bias
-        self.reduce = TreeLSTMCell(input_size, hidden_size)
+        self.reduce = TreeLSTMCell(input_size, hidden_size, childsum=childsum)
 
         # project word to initial c
         self.proj_x = nn.Linear(input_size, hidden_size)
@@ -168,11 +177,12 @@ class TreeLSTMClassifier(nn.Module):
         output_dim,
         vectors=None,
         train_embeddings=False,
+        childsum=False,
     ):
         super(TreeLSTMClassifier, self).__init__()
         self.vocab = vocab
         self.hidden_dim = hidden_dim
-        self.treelstm = TreeLSTM(embedding_dim, hidden_dim)
+        self.treelstm = TreeLSTM(embedding_dim, hidden_dim, childsum=childsum)
         self.output_layer = nn.Sequential(
             nn.Dropout(p=0.5), nn.Linear(hidden_dim, output_dim, bias=True)
         )
@@ -209,6 +219,7 @@ class TreeLSTMLightning(pl.LightningModule):
         output_dim=5,
         lr=0.001,
         hidden_dim=100,
+        childsum=False,
         train_embeddings=False,
     ):
         super().__init__()
@@ -221,12 +232,13 @@ class TreeLSTMLightning(pl.LightningModule):
             hidden_dim=hidden_dim,
             output_dim=output_dim,
             vectors=vectors,
+            childsum=childsum,
             train_embeddings=train_embeddings,
         )
-        
-        print_parameters(self.model)
+
         self.loss = nn.CrossEntropyLoss()
-        self.losses = []
+
+        print_parameters(self.model)
 
     def training_step(self, batch):
         x, targets = batch
@@ -240,7 +252,9 @@ class TreeLSTMLightning(pl.LightningModule):
         logits = self.model(x)
         loss = self.loss(logits, targets)
         acc = (logits.argmax(dim=-1) == targets).sum().float() / targets.size(0)
-        self.log("val_acc", acc, prog_bar=True, on_epoch=True, batch_size=targets.size(0))
+        self.log(
+            "val_acc", acc, prog_bar=True, on_epoch=True, batch_size=targets.size(0)
+        )
         self.log("val_loss", loss, on_epoch=True, batch_size=targets.size(0))
         return {"loss": loss, "val_acc": acc}
 
@@ -264,8 +278,7 @@ class TreeLSTMLightning(pl.LightningModule):
 def main():
     args = parser()
 
-    if args.debug:
-        print(args)
+    print(args)
 
     # Set the random seed manually for reproducibility.
     pl.seed_everything(args.seed)
@@ -277,7 +290,7 @@ def main():
     embeddings_path = load_embeddings(args.embeddings_type, args.data_dir)
     vocab, vectors = initialize_vocabulary(embeddings_path)
 
-    loader = TreeDatasetTreePL(
+    loader = SST_TreePL(
         vocab=vocab,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -290,7 +303,9 @@ def main():
     # Load the model
     if args.checkpoint:
         lightning_model = TreeLSTMLightning.load_from_checkpoint(
-            args.checkpoint, vocab=vocab, vectors=None
+            args.checkpoint,
+            vocab=vocab,
+            vectors=vectors,
         )
     else:
         lightning_model = TreeLSTMLightning(
@@ -301,41 +316,41 @@ def main():
             lr=args.lr,
             hidden_dim=args.hidden_dim,
             train_embeddings=args.train_embeddings,
+            childsum=args.childsum,
         )
 
     # Prepare a callback to save the best model
-    model_name = lightning_model.model.__class__.__name__
+    model_name = f"{lightning_model.model.__class__.__name__}-{args.embeddings_type or 'custom'}-{'childsum' if args.childsum else 'concat'}"
     os.makedirs(args.model_dir, exist_ok=True)
     bestmodel_callback = ModelCheckpoint(
         monitor="val_acc",
         save_top_k=1,
         mode="max",
-        filename=f"{model_name}-{{epoch}}-{{val_loss:.2f}}-{{val_acc:.2f}}",
+        filename=f"{model_name}-{'subtrees' if args.subtrees else 'root'}-{args.seed}-{{epoch}}-{{val_loss:.2f}}-{{val_acc:.2f}}",
         dirpath=os.path.join(args.model_dir, "checkpoints"),
     )
-    
-    logger = pl.loggers.TensorBoardLogger(
-        save_dir=args.model_dir, name=model_name
-    )
+
+    logger = pl.loggers.TensorBoardLogger(save_dir=args.model_dir, name=model_name)
     trainer = pl.Trainer(
         accelerator=args.device,
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
         logger=logger,
-        detect_anomaly=True
+        enable_progress_bar=args.debug,
     )
 
     if args.evaluate:
         trainer.test(lightning_model, loader.test_dataloader())
     else:
         # Training code + testing
-        trainer.fit(lightning_model, loader.train_dataloader(), loader.val_dataloader())
-
-        lightning_model = TreeLSTMLightning.load_from_checkpoint(
-            bestmodel_callback.best_model_path, vocab=vocab, vectors=None
+        trainer.fit(
+            lightning_model,
+            loader.train_dataloader(),
+            loader.val_dataloader(),
+            ckpt_path=args.checkpoint,
         )
 
-        trainer.test(lightning_model, loader.test_dataloader())
+        trainer.test(lightning_model, loader.test_dataloader(), ckpt_path="best")
 
 
 if __name__ == "__main__":

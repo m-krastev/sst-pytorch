@@ -1,19 +1,19 @@
 import os
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 from torch import nn
 from torch import optim
 
-from utils import TreeDatasetPL, Vocabulary, initialize_vocabulary, load_embeddings, parser
+from utils import (
+    SST_PL,
+    Vocabulary,
+    initialize_vocabulary,
+    load_embeddings,
+    parser,
+    print_parameters,
+)
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-
-plt.style.use("default")
-sns.set_style("whitegrid")
-
-# YOUR CODE HERE
 
 
 class DeepCBOW(nn.Module):
@@ -35,7 +35,9 @@ class DeepCBOW(nn.Module):
         # this is a trainable look-up table with word embeddings
         if vectors is not None:
             self.embed = nn.Embedding.from_pretrained(
-                vectors, freeze=not train_embeddings, padding_idx=self.vocab.w2i["<pad>"]
+                vectors,
+                freeze=not train_embeddings,
+                padding_idx=self.vocab.w2i["<pad>"],
             )
         else:
             self.embed = nn.Embedding(
@@ -88,7 +90,8 @@ class DeepCBOWLightning(pl.LightningModule):
             hiddens=hiddens,
         )
         self.loss = nn.CrossEntropyLoss()
-        self.losses = []
+
+        print_parameters(self.model)
 
     def training_step(self, batch):
         x, targets = batch
@@ -127,15 +130,13 @@ class DeepCBOWLightning(pl.LightningModule):
 def main():
     args = parser()
 
-    if args.debug:
-        print(args)
+    print(args)
 
     # Set the random seed manually for reproducibility.
     pl.seed_everything(args.seed)
 
     i2t = args.classes
     t2i = {p: i for i, p in enumerate(i2t)}  # noqa: F841
-
 
     vocab, vectors = None, None
     if args.embeddings_type:
@@ -144,24 +145,31 @@ def main():
         vocab, vectors = initialize_vocabulary(embeddings_path)
 
     # Load the dataset
-    loader = TreeDatasetPL(vocab=vocab,
-        batch_size=args.batch_size, num_workers=args.num_workers, lower=args.lower
+    loader = SST_PL(
+        vocab=vocab,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        lower=args.lower,
     )
     loader.prepare_data()
 
     # Load the model
     if args.checkpoint:
         lightning_model = DeepCBOWLightning.load_from_checkpoint(
-            args.checkpoint, vocab=loader.vocab,vectors=vectors
+            args.checkpoint, vocab=loader.vocab, vectors=vectors
         )
     else:
         lightning_model = DeepCBOWLightning(
-            args.embedding_dim, loader.vocab, vectors=vectors, output_dim=len(i2t), lr=args.lr, train_embeddings=args.train_embeddings, hiddens=args.hidden_dims
+            args.embedding_dim,
+            loader.vocab,
+            vectors=vectors,
+            output_dim=len(i2t),
+            lr=args.lr,
+            train_embeddings=args.train_embeddings,
+            hiddens=args.hidden_dims,
         )
 
-    model_name = (
-        f"{lightning_model.model.__class__.__name__}{'__pt' if vectors is not None else ''}{'__ft' if args.train_embeddings else ''}"
-    )
+    model_name = f"{lightning_model.model.__class__.__name__}-{args.embedding_type or 'custom'}{'-ft' if args.train_embeddings else ''}"
     os.makedirs(args.model_dir, exist_ok=True)
     bestmodel_callback = ModelCheckpoint(
         monitor="val_acc",
@@ -177,19 +185,21 @@ def main():
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
         logger=logger,
+        enable_progress_bar=args.debug,
     )
 
     if args.evaluate:
         trainer.test(lightning_model, loader.test_dataloader())
     else:
         # Training code + testing
-        trainer.fit(lightning_model, loader.train_dataloader(), loader.val_dataloader())
-
-        lightning_model = DeepCBOWLightning.load_from_checkpoint(
-            bestmodel_callback.best_model_path, vocab=loader.vocab, vectors=vectors
+        trainer.fit(
+            lightning_model,
+            loader.train_dataloader(),
+            loader.val_dataloader(),
+            ckpt_path=args.checkpoint,
         )
 
-        trainer.test(lightning_model, loader.test_dataloader())
+        trainer.test(lightning_model, loader.test_dataloader(), ckpt_path="best")
 
 
 if __name__ == "__main__":

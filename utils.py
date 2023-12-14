@@ -13,7 +13,6 @@ from torch.utils.data import Dataset
 
 import pytorch_lightning as pl
 
-
 import torch
 from tqdm import tqdm
 
@@ -147,11 +146,11 @@ def load_embeddings(type, data_dir="data/"):
     Possible options: word2vec, glove"""
     match type:
         case "word2vec":
-            savepath = f"{data_dir}/word2vec.txt"
+            savepath = os.path.join(data_dir, "word2vec.txt")
             if not os.path.exists(data_dir):
                 os.makedirs(data_dir, exist_ok=True)
-            if os.path.exists(f"{data_dir}/word2vec.txt"):
-                return f"{data_dir}/word2vec.txt"
+            if os.path.exists(savepath):
+                return savepath
 
             return download_file(
                 "https://gist.githubusercontent.com/bastings/4d1c346c68969b95f2c34cfbc00ba0a0/raw/76b4fefc9ef635a79d0d8002522543bc53ca2683/googlenews.word2vec.300d.txt",
@@ -159,7 +158,7 @@ def load_embeddings(type, data_dir="data/"):
             )
 
         case "glove":
-            savepath = f"{data_dir}/glove.txt"
+            savepath = os.path.join(data_dir, "glove.txt")
             if not os.path.exists(data_dir):
                 os.makedirs(data_dir, exist_ok=True)
             if os.path.exists(savepath):
@@ -175,18 +174,18 @@ def load_dataset(savepath):
     if not os.path.exists(savepath):
         os.makedirs(savepath, exist_ok=True)
 
-    if not os.path.exists(f"{savepath}/trees"):
+    if not os.path.exists(os.path.join(savepath, "trees")):
         _ = download_file(
             "http://nlp.stanford.edu/sentiment/trainDevTestTrees_PTB.zip",
-            savepath + "/trees.zip",
+            os.path.join(savepath, "trees.zip"),
         )
 
         zipfile.ZipFile(_).extractall(savepath)
 
     return {
-        "train": f"{savepath}/trees/train.txt",
-        "dev": f"{savepath}/trees/dev.txt",
-        "test": f"{savepath}/trees/test.txt",
+        "train": os.path.join(savepath, "trees", "train.txt"),
+        "dev": os.path.join(savepath, "trees", "dev.txt"),
+        "test": os.path.join(savepath, "trees", "test.txt"),
     }
 
 
@@ -210,7 +209,7 @@ def initialize_vocabulary(embeddings_path):
     return v, torch.row_stack(vectors)
 
 
-class TreeDataset(Dataset):
+class SST(Dataset):
     def __init__(self, data: list[Example], vocab: Vocabulary):
         self.data = data
         self.vocab = vocab
@@ -245,7 +244,7 @@ def collate_batch(batch):
     return batch
 
 
-class TreeDatasetPL(pl.LightningDataModule):
+class SST_PL(pl.LightningDataModule):
     def __init__(
         self,
         vocab: Vocabulary = None,
@@ -272,13 +271,13 @@ class TreeDatasetPL(pl.LightningDataModule):
                     self.vocab.count_token(token)
             self.vocab.build()
 
-        self.train_data = TreeDataset(
+        self.train_data = SST(
             list(examplereader(datasets["train"], lower=self.lower)), self.vocab
         )
-        self.val_data = TreeDataset(
+        self.val_data = SST(
             list(examplereader(datasets["dev"], lower=self.lower)), self.vocab
         )
-        self.test_data = TreeDataset(
+        self.test_data = SST(
             list(examplereader(datasets["test"], lower=self.lower)), self.vocab
         )
 
@@ -308,7 +307,7 @@ class TreeDatasetPL(pl.LightningDataModule):
 
 
 # naming convention goals
-class TreeDatasetTree(Dataset):
+class SST_Tree(Dataset):
     def __init__(self, data: list[Example], vocab: Vocabulary):
         self.data = data
         self.vocab = vocab
@@ -335,7 +334,10 @@ class TreeDatasetTree(Dataset):
         # NOTE: reversed sequence!
         x = torch.tensor(
             [
-                pad([self.vocab.w2i.get(t, self.vocab.w2i["<unk>"]) for t in ex.tokens], maxlen)[::-1]
+                pad(
+                    [self.vocab.w2i.get(t, self.vocab.w2i["<unk>"]) for t in ex.tokens],
+                    maxlen,
+                )[::-1]
                 for ex in mb
             ],
             dtype=torch.int64,
@@ -350,7 +352,7 @@ class TreeDatasetTree(Dataset):
         return (x, transitions), y
 
 
-class TreeDatasetTreePL(pl.LightningDataModule):
+class SST_TreePL(pl.LightningDataModule):
     def __init__(
         self,
         vocab: Vocabulary = None,
@@ -381,64 +383,30 @@ class TreeDatasetTreePL(pl.LightningDataModule):
 
         if self.subtrees:
             # create subtrees
-            train_data = list(examplereader(datasets["train"], lower=self.lower))
             subtrees = []
-            for ex in train_data:
-                for subtree in ex.tree.subtrees():
-                        print(subtree.__str__())
-                        subtrees.append(
-                            Example(
-                                tokens=subtree.leaves(),
-                                tree=subtree,
-                                label=subtree.label(),
-                                transitions=transitions_from_treestring(
-                                    subtree.__str__()
-                                ),
-                            )
-                        )
-            self.train_data = TreeDatasetTree(subtrees, self.vocab)
-            
-            val_data = list(examplereader(datasets["dev"], lower=self.lower))
-            subtrees = []
-            for ex in val_data:
+            for ex in examplereader(datasets["train"], lower=self.lower):
                 for subtree in ex.tree.subtrees():
                     subtrees.append(
                         Example(
                             tokens=subtree.leaves(),
                             tree=subtree,
-                            label=subtree.label(),
+                            label=int(subtree.label()),
                             transitions=transitions_from_treestring(
-                                subtree.__str__()
+                                " ".join(subtree.__str__().split())
                             ),
                         )
                     )
-            self.val_data = TreeDatasetTree(subtrees, self.vocab)
-            
-            test_data = list(examplereader(datasets["test"], lower=self.lower))
-            subtrees = []
-            for ex in test_data:
-                for subtree in ex.tree.subtrees():
-                    subtrees.append(
-                        Example(
-                            tokens=subtree.leaves(),
-                            tree=subtree,
-                            label=subtree.label(),
-                            transitions=transitions_from_treestring(
-                                subtree.__str__()
-                            ),
-                        )
-                    )
-            self.test_data = TreeDatasetTree(subtrees, self.vocab)
+            self.train_data = SST_Tree(subtrees, self.vocab)
         else:
-            self.train_data = TreeDatasetTree(
+            self.train_data = SST_Tree(
                 list(examplereader(datasets["train"], lower=self.lower)), self.vocab
             )
-            self.val_data = TreeDatasetTree(
-                list(examplereader(datasets["dev"], lower=self.lower)), self.vocab
-            )
-            self.test_data = TreeDatasetTree(
-                list(examplereader(datasets["test"], lower=self.lower)), self.vocab
-            )
+        self.val_data = SST_Tree(
+            list(examplereader(datasets["dev"], lower=self.lower)), self.vocab
+        )
+        self.test_data = SST_Tree(
+            list(examplereader(datasets["test"], lower=self.lower)), self.vocab
+        )
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(
@@ -551,7 +519,7 @@ def parser():
     )
     parser.add_argument("--debug", action="store_true", help="debug mode")
     parser.add_argument(
-        "--lower", action="store_false", help="do not lowercase the data"
+        "--lower", action="store_true", help="do not lowercase the data"
     )
     parser.add_argument(
         "--train_embeddings",
@@ -569,6 +537,18 @@ def parser():
         "--subtrees",
         action="store_true",
         help="whether to use subtrees",
+    )
+
+    parser.add_argument(
+        "--childsum",
+        action="store_true",
+        help="whether to use childsum for TreeLSTM",
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default="roberta-base",
+        help="name of the RobertaModel to use as base for sentiment classification",
     )
 
     return parser.parse_args()

@@ -3,7 +3,7 @@ import os
 from torch import nn
 from torch import optim
 
-from utils import TreeDatasetPL, parser
+from utils import SST_PL, parser, print_parameters
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -44,7 +44,8 @@ class CBOWLightning(pl.LightningModule):
 
         self.model = CBOW(vocab, embedding_dim, output_dim)
         self.loss = nn.CrossEntropyLoss()
-        self.losses = []
+
+        print_parameters(self.model)
 
     def training_step(self, batch):
         x, targets = batch
@@ -83,8 +84,7 @@ class CBOWLightning(pl.LightningModule):
 def main():
     args = parser()
 
-    if args.debug:
-        print(args)
+    print(args)
 
     # Set the random seed manually for reproducibility.
     pl.seed_everything(args.seed)
@@ -93,7 +93,7 @@ def main():
     t2i = {p: i for i, p in enumerate(i2t)}  # noqa: F841
 
     # Load the dataset
-    loader = TreeDatasetPL(
+    loader = SST_PL(
         batch_size=args.batch_size, num_workers=args.num_workers, lower=args.lower
     )
     loader.prepare_data()
@@ -124,21 +124,22 @@ def main():
         accelerator=args.device,
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
-        enable_progress_bar=args.debug,
         logger=logger,
+        enable_progress_bar=args.debug,
     )
 
     if args.evaluate:
         trainer.test(lightning_model, loader.test_dataloader())
     else:
         # Training code + testing
-        trainer.fit(lightning_model, loader.train_dataloader(), loader.val_dataloader())
-
-        lightning_model = CBOWLightning.load_from_checkpoint(
-            bestmodel_callback.best_model_path, vocab=loader.vocab
+        trainer.fit(
+            lightning_model,
+            loader.train_dataloader(),
+            loader.val_dataloader(),
+            ckpt_path=args.checkpoint,
         )
 
-        trainer.test(lightning_model, loader.test_dataloader())
+        trainer.test(lightning_model, loader.test_dataloader(), ckpt_path="best")
 
 
 if __name__ == "__main__":

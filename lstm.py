@@ -6,10 +6,11 @@ from torch import optim
 import torch
 
 from utils import (
-    TreeDatasetPL,
+    SST_PL,
     initialize_vocabulary,
     load_embeddings,
     parser,
+    print_parameters,
 )
 
 import pytorch_lightning as pl
@@ -82,7 +83,7 @@ class LSTMClassifier(nn.Module):
         train_embeddings=False,
     ):
         super(LSTMClassifier, self).__init__()
-        
+
         self.vocab = vocab
         self.hidden_dim = hidden_dim
         self.rnn = MyLSTMCell(embedding_dim, hidden_dim)
@@ -90,7 +91,7 @@ class LSTMClassifier(nn.Module):
         self.output_layer = nn.Sequential(
             nn.Dropout(p=0.5), nn.Linear(hidden_dim, output_dim)  # explained later
         )
-        
+
         if vectors is not None:
             self.embed = nn.Embedding.from_pretrained(
                 vectors, freeze=not train_embeddings, padding_idx=vocab.w2i["<pad>"]
@@ -99,7 +100,7 @@ class LSTMClassifier(nn.Module):
             self.embed = nn.Embedding(
                 len(vocab.w2i), embedding_dim, padding_idx=vocab.w2i["<pad>"]
             )
-    
+
     def forward(self, x, *args):
         B = x.size(0)  # batch size (this is 1 for now, i.e. 1 single example)
         T = x.size(1)  # timesteps (the number of words in the sentence)
@@ -162,7 +163,7 @@ class LSTMLightning(pl.LightningModule):
         vectors,
         output_dim=5,
         lr=0.001,
-        hidden_dim = 100,
+        hidden_dim=100,
         train_embeddings=False,
     ):
         super().__init__()
@@ -174,11 +175,12 @@ class LSTMLightning(pl.LightningModule):
             embedding_dim=embedding_dim,
             hidden_dim=hidden_dim,
             output_dim=output_dim,
-            vectors = vectors,
+            vectors=vectors,
             train_embeddings=train_embeddings,
         )
         self.loss = nn.CrossEntropyLoss()
-        self.losses = []
+
+        print_parameters(self.model)
 
     def training_step(self, batch):
         x, targets = batch
@@ -217,8 +219,7 @@ class LSTMLightning(pl.LightningModule):
 def main():
     args = parser()
 
-    if args.debug:
-        print(args)
+    print(args)
 
     # Set the random seed manually for reproducibility.
     pl.seed_everything(args.seed)
@@ -230,7 +231,7 @@ def main():
     embeddings_path = load_embeddings(args.embeddings_type, args.data_dir)
     vocab, vectors = initialize_vocabulary(embeddings_path)
 
-    loader = TreeDatasetPL(
+    loader = SST_PL(
         vocab=vocab,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -242,7 +243,7 @@ def main():
     # Load the model
     if args.checkpoint:
         lightning_model = LSTMLightning.load_from_checkpoint(
-            args.checkpoint, vocab=vocab, vectors=None
+            args.checkpoint, vocab=vocab, vectors=vectors
         )
     else:
         lightning_model = LSTMLightning(
@@ -265,28 +266,28 @@ def main():
         filename=f"{model_name}-{{epoch}}-{{val_loss:.2f}}-{{val_acc:.2f}}",
         dirpath=os.path.join(args.model_dir, "checkpoints"),
     )
-    
-    logger = pl.loggers.TensorBoardLogger(
-        save_dir=args.model_dir, name=model_name
-    )
+
+    logger = pl.loggers.TensorBoardLogger(save_dir=args.model_dir, name=model_name)
     trainer = pl.Trainer(
         accelerator=args.device,
         max_epochs=args.epochs,
         callbacks=[bestmodel_callback],
         logger=logger,
+        enable_progress_bar=args.debug,
     )
 
     if args.evaluate:
         trainer.test(lightning_model, loader.test_dataloader())
     else:
         # Training code + testing
-        trainer.fit(lightning_model, loader.train_dataloader(), loader.val_dataloader())
-
-        lightning_model = LSTMLightning.load_from_checkpoint(
-            bestmodel_callback.best_model_path, vocab=vocab, vectors=None
+        trainer.fit(
+            lightning_model,
+            loader.train_dataloader(),
+            loader.val_dataloader(),
+            ckpt_path=args.checkpoint,
         )
 
-        trainer.test(lightning_model, loader.test_dataloader())
+        trainer.test(lightning_model, loader.test_dataloader(), ckpt_path="best")
 
 
 if __name__ == "__main__":
