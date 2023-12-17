@@ -32,6 +32,6 @@ The goal of this practical is to implement a sentiment analysis model using PyTo
 - `--eval_every` (deprecated, unused): Frequency of evaluating the model. Default is 1000.
 - `--classes`: Classes for classification. Default is ["very negative", "negative", "neutral", "positive", "very positive"].
 - `--debug`: Flag to specify whether to run in debug mode. Debug mode turns off progress bars and some printing utilities. Default is False.
-- `--lower`: Flag to specify whether to lowercase the data. Default is True.
+- `--lower`: Flag to specify whether to lowercase the data. Default is False.
 - `--train_embeddings`: Flag to specify whether to train embeddings along with the model. Default is False.
 - `--checkpoint`: Path of the model checkpoint file to load. Default is None.
